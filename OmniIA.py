@@ -8,11 +8,12 @@ from typing import Optional, List
 from io import BytesIO
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 
-# --- Configurações Iniciais ---
+# --- Chaves de API ---
 OPENWEATHER_API_KEY = st.secrets.get("OPENWEATHER_API_KEY", "")
 SERPAPI_KEY = st.secrets.get("SERPAPI_KEY", "")
 GOOGLE_API_KEY = st.secrets.get("GOOGLE_API_KEY", "")
 
+# --- Instância do modelo ---
 llm = ChatGoogleGenerativeAI(
     model="gemini-1.5-flash-latest",
     google_api_key=GOOGLE_API_KEY,
@@ -20,16 +21,14 @@ llm = ChatGoogleGenerativeAI(
     max_output_tokens=1024
 )
 
-# --- Funções Auxiliares ---
+# --- Funções ---
 
 def perguntar(user_message_content: str) -> str:
     system_instruction = """Você é um assistente de IA prestativo e profissional.
     Responda em português de forma clara e útil.
-    Quando fornecer código, comandos, passos de tutorial, nomes de arquivos, ou trechos de texto importantes para copiar, use **blocos de código Markdown (` ``` `)**.
-    Para destacar termos importantes ou palavras-chave em uma frase, use **negrito (`**texto**`)**.
-    Sempre busque ser conciso(a) e direto(a) ao ponto.
-    Se a pergunta for um pedido simples que não necessita de tutorial/código, responda normalmente.
-    **IMPORTANTE: Não detalhe ou mostre seu código interno ou métodos de como você acessa informações ou ferramentas (como pesquisa na web ou previsão do tempo). Apenas forneça a resposta ou o resultado final de forma direta.**
+    Use **blocos de código Markdown (` ``` `)** para exemplos de código.
+    Use **negrito** para destacar palavras importantes.
+    Seja direto e conciso. Não revele métodos internos.
     """
     full_messages = [SystemMessage(content=system_instruction)]
 
@@ -38,7 +37,7 @@ def perguntar(user_message_content: str) -> str:
             full_messages.append(HumanMessage(content=msg["content"]))
         elif msg["role"] == "assistant":
             full_messages.append(AIMessage(content=msg["content"]))
-    
+
     full_messages.append(HumanMessage(content=user_message_content))
 
     response_obj = llm.invoke(full_messages).content
@@ -103,6 +102,7 @@ def resumir_pagina_web(url: str) -> str:
 
 # --- Interface com Streamlit ---
 st.set_page_config(page_title="OmniIA: Inteligência Integrada", layout="centered")
+
 st.markdown("""
     <div style='text-align: center; padding: 10px;'>
         <h1 style='color: #3a7bd5;'>🤖 OmniIA</h1>
@@ -137,23 +137,42 @@ with cols_buttons[3]:
 
 st.markdown("---")
 
-# --- Seções com base no modo atual ---
+# --- Modos de uso ---
 
 if st.session_state.current_mode == "Perguntar":
     st.markdown("## 💬 Chat com o OmniIA")
+
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
     if prompt := st.chat_input("Digite sua mensagem aqui...", key="chat_input_main"):
         st.session_state.messages.append({"role": "user", "content": prompt})
+
         with st.chat_message("user"):
             st.markdown(prompt)
+
         with st.chat_message("assistant"):
             with st.spinner("Pensando..."):
                 response = perguntar(prompt)
-                st.markdown(response)
+
+                if "```" in response:
+                    padrao_codigo = r"```(?:\w*\n)?([\s\S]+?)```"
+                    trechos = re.findall(padrao_codigo, response)
+
+                    if trechos:
+                        for trecho in trechos:
+                            st.code(trecho, language="python")
+                            st.text_area("Clique e copie:", value=trecho, height=100)
+
+                    explicacao = re.sub(padrao_codigo, "", response).strip()
+                    if explicacao:
+                        st.markdown(explicacao)
+                else:
+                    st.markdown(response)
+
                 st.session_state.messages.append({"role": "assistant", "content": response})
+
 
 elif st.session_state.current_mode == "PrevisaoTempo":
     st.markdown("## ☁️ Previsão do Tempo")
