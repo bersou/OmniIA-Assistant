@@ -1,5 +1,9 @@
 streamlit
-requests
+requests==2.32.3
 beautifulsoup4
 langchain
 langchain-google-genai
+urllib3==2.4.0
+idna==3.7
+charset-normalizer==3.3.2
+certifi==2024.6.2
