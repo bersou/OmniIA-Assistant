@@ -9,7 +9,7 @@ from io import BytesIO
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 
 # --- Chaves de API ---
-OPENWEATHER_API_KEY = st.secrets.get("OPENWEATHER_API_KEY", "")
+WEATHER_API_KEY = st.secrets.get("WEATHER_API_KEY", "")
 SERPAPI_KEY = st.secrets.get("SERPAPI_KEY", "")
 GOOGLE_API_KEY = st.secrets.get("GOOGLE_API_KEY", "")
 
@@ -46,16 +46,27 @@ def perguntar(user_message_content: str) -> str:
 
 def previsao_tempo(cidade: str) -> str:
     try:
-        url = f"http://api.openweathermap.org/data/2.5/weather?q={cidade}&appid={OPENWEATHER_API_KEY}&units=metric&lang=pt"
+        url = f"http://api.weatherapi.com/v1/current.json?key={WEATHER_API_KEY}&q={cidade}&lang=pt"
         resposta = requests.get(url).json()
-        if resposta.get("cod") != 200:
-            return f"Erro: {resposta.get('message', 'Erro desconhecido')}"
-        clima = resposta["weather"][0]["description"].capitalize()
-        temp = resposta["main"]["temp"]
-        sensacao = resposta["main"]["feels_like"]
-        umidade = resposta["main"]["humidity"]
-        vento = resposta["wind"]["speed"]
-        return f"**{cidade}**\n- Clima: {clima}\n- Temperatura: {temp:.1f}°C\n- Sensação térmica: {sensacao:.1f}°C\n- Umidade: {umidade}%\n- Vento: {vento} m/s"
+
+        if "error" in resposta:
+            return f"Erro: {resposta['error']['message']}"
+
+        local = resposta["location"]["name"]
+        temp = resposta["current"]["temp_c"]
+        sensacao = resposta["current"]["feelslike_c"]
+        umidade = resposta["current"]["humidity"]
+        vento = resposta["current"]["wind_kph"]
+        condicao = resposta["current"]["condition"]["text"]
+
+        return (
+            f"**{local}**\n"
+            f"- Clima: {condicao}\n"
+            f"- Temperatura: {temp:.1f}°C\n"
+            f"- Sensação térmica: {sensacao:.1f}°C\n"
+            f"- Umidade: {umidade}%\n"
+            f"- Vento: {vento} km/h"
+        )
     except Exception as e:
         return f"Erro ao buscar previsão do tempo: {e}"
 
