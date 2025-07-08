@@ -1,215 +1,143 @@
 import os
-import requests
-import re
+import json
+import datetime
 import streamlit as st
-from bs4 import BeautifulSoup
-from langchain_google_genai import ChatGoogleGenerativeAI
-from typing import Optional, List
-from io import BytesIO
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+import requests
 
-# --- Chaves de API ---
-WEATHER_API_KEY = st.secrets.get("WEATHER_API_KEY", "")
-SERPAPI_KEY = st.secrets.get("SERPAPI_KEY", "")
-GOOGLE_API_KEY = st.secrets.get("GOOGLE_API_KEY", "")
+# ========== CONFIGURAÇÃO ==========
+st.set_page_config(page_title="OmniIA Assistant", layout="wide")
 
-# --- Instância do modelo ---
-llm = ChatGoogleGenerativeAI(
-    model="gemini-1.5-flash-latest",
-    google_api_key=GOOGLE_API_KEY,
-    temperature=0.7,
-    max_output_tokens=1024
-)
+LIMITES_DIARIOS = {
+    "gemini": 50,
+    "openweather": 20,
+    "serpapi": 30
+}
 
-# --- Funções ---
+USO_PATH = "uso.json"
 
-def perguntar(user_message_content: str) -> str:
-    system_instruction = """Você é um assistente de IA prestativo e profissional.
-    Responda em português de forma clara e útil.
-    Use **blocos de código Markdown (` ``` `)** para exemplos de código.
-    Use **negrito** para destacar palavras importantes.
-    Seja direto e conciso. Não revele métodos internos.
-    """
-    full_messages = [SystemMessage(content=system_instruction)]
+# ========== CONTROLE DE USO ==========
+def carregar_uso():
+    if not os.path.exists(USO_PATH):
+        return {"data": str(datetime.date.today()), "contadores": {api: 0 for api in LIMITES_DIARIOS}}
+    with open(USO_PATH, "r") as f:
+        uso = json.load(f)
+    if uso["data"] != str(datetime.date.today()):
+        uso = {"data": str(datetime.date.today()), "contadores": {api: 0 for api in LIMITES_DIARIOS}}
+        salvar_uso(uso)
+    return uso
 
-    for msg in st.session_state.messages:
-        if msg["role"] == "user":
-            full_messages.append(HumanMessage(content=msg["content"]))
-        elif msg["role"] == "assistant":
-            full_messages.append(AIMessage(content=msg["content"]))
+def salvar_uso(uso):
+    with open(USO_PATH, "w") as f:
+        json.dump(uso, f)
 
-    full_messages.append(HumanMessage(content=user_message_content))
+def pode_usar_api(api_nome):
+    uso = carregar_uso()
+    if uso["contadores"][api_nome] < LIMITES_DIARIOS[api_nome]:
+        uso["contadores"][api_nome] += 1
+        salvar_uso(uso)
+        return True
+    else:
+        return False
 
-    response_obj = llm.invoke(full_messages).content
-    return response_obj
+# ========== APIS ==========
+def chamar_gemini(prompt):
+    if not pode_usar_api("gemini"):
+        return "⚠️ Limite diário da API Gemini atingido."
+    # Aqui você colocaria a chamada real ao Gemini
+    return f"Esta é uma resposta simulada da IA para: {prompt}"
 
-
-def previsao_tempo(cidade: str) -> str:
-    try:
-        url = f"http://api.weatherapi.com/v1/current.json?key={WEATHER_API_KEY}&q={cidade}&lang=pt"
-        resposta = requests.get(url).json()
-
-        if "error" in resposta:
-            return f"Erro: {resposta['error']['message']}"
-
-        local = resposta["location"]["name"]
-        temp = resposta["current"]["temp_c"]
-        sensacao = resposta["current"]["feelslike_c"]
-        umidade = resposta["current"]["humidity"]
-        vento = resposta["current"]["wind_kph"]
-        condicao = resposta["current"]["condition"]["text"]
-
-        return (
-            f"**{local}**\n"
-            f"- Clima: {condicao}\n"
-            f"- Temperatura: {temp:.1f}°C\n"
-            f"- Sensação térmica: {sensacao:.1f}°C\n"
-            f"- Umidade: {umidade}%\n"
-            f"- Vento: {vento} km/h"
-        )
-    except Exception as e:
-        return f"Erro ao buscar previsão do tempo: {e}"
-
-
-def pesquisar_web(termo: str, max_links: int = 5) -> List[str]:
-    try:
-        params = {
-            "engine": "google",
-            "q": termo,
-            "api_key": SERPAPI_KEY
-        }
-        resposta = requests.get("https://serpapi.com/search", params=params).json()
-        resultados = resposta.get("organic_results", [])
-        links = [res.get("link") for res in resultados if res.get("link")][:max_links]
-        return links if links else ["Nenhum resultado encontrado."]
-    except Exception as e:
-        return [f"Erro: {e}"]
-
-
-def resumir_pagina_web(url: str) -> str:
+def obter_clima(cidade, chave):
+    if not pode_usar_api("openweather"):
+        return "⚠️ Limite diário da API OpenWeather atingido."
+    url = f"http://api.openweathermap.org/data/2.5/weather?q={cidade}&appid={chave}&lang=pt_br&units=metric"
     try:
         response = requests.get(url)
-        response.raise_for_status()
-        soup = BeautifulSoup(response.text, 'html.parser')
-
-        for script in soup(["script", "style"]):
-            script.extract()
-
-        text = soup.get_text()
-        lines = (line.strip() for line in text.splitlines())
-        chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
-        text = '\n'.join(chunk for chunk in chunks if chunk)
-
-        if len(text) > 4000:
-            text = text[:4000] + "..."
-
-        prompt = f"Por favor, resuma o seguinte conteúdo de uma página web de forma concisa e clara em português:\n\n{text}\n\nResumo:"
-        return llm.invoke(prompt).content
-    except requests.exceptions.RequestException as e:
-        return f"Erro ao acessar a URL: {e}. Por favor, verifique se a URL está correta e é acessível."
-    except Exception as e:
-        return f"Ocorreu um erro ao processar a página: {e}"
-
-
-# --- Interface com Streamlit ---
-st.set_page_config(page_title="OmniIA: Inteligência Integrada", layout="centered")
-
-st.markdown("""
-    <div style='text-align: center; padding: 10px;'>
-        <h1 style='color: #3a7bd5;'>🤖 OmniIA</h1>
-        <h3 style='color: gray;'>Inteligência Integrada para suas tarefas diárias</h3>
-    </div>
-    <hr style='margin-bottom: 2rem;'>
-""", unsafe_allow_html=True)
-
-if 'current_mode' not in st.session_state:
-    st.session_state.current_mode = "Perguntar"
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-
-st.markdown("## Peça ao OmniIA")
-
-st.markdown("<br>", unsafe_allow_html=True)
-st.markdown("### Selecione uma Ferramenta ou Ação:")
-
-cols_buttons = st.columns(4)
-with cols_buttons[0]:
-    if st.button("💬 Chat (IA Geral)", key="btn_chat_general"):
-        st.session_state.current_mode = "Perguntar"
-with cols_buttons[1]:
-    if st.button("☁️ Previsão do Tempo", key="btn_weather"):
-        st.session_state.current_mode = "PrevisaoTempo"
-with cols_buttons[2]:
-    if st.button("🌐 Pesquisar na Web", key="btn_web_search"):
-        st.session_state.current_mode = "PesquisarWeb"
-with cols_buttons[3]:
-    if st.button("📄 Resumir Página", key="btn_page_summary"):
-        st.session_state.current_mode = "ResumirPagina"
-
-st.markdown("---")
-
-# --- Modos de uso ---
-
-if st.session_state.current_mode == "Perguntar":
-    st.markdown("## 💬 Chat com o OmniIA")
-
-    for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
-
-    if prompt := st.chat_input("Digite sua mensagem aqui...", key="chat_input_main"):
-        st.session_state.messages.append({"role": "user", "content": prompt})
-
-        with st.chat_message("user"):
-            st.markdown(prompt)
-
-        with st.chat_message("assistant"):
-            with st.spinner("Pensando..."):
-                response = perguntar(prompt)
-
-                if "```" in response:
-                    padrao_codigo = r"```(?:\w*\n)?([\s\S]+?)```"
-                    trechos = re.findall(padrao_codigo, response)
-
-                    if trechos:
-                        for trecho in trechos:
-                            st.code(trecho, language="python")
-                            st.text_area("Clique e copie:", value=trecho, height=100)
-
-                    explicacao = re.sub(padrao_codigo, "", response).strip()
-                    if explicacao:
-                        st.markdown(explicacao)
-                else:
-                    st.markdown(response)
-
-                st.session_state.messages.append({"role": "assistant", "content": response})
-
-
-elif st.session_state.current_mode == "PrevisaoTempo":
-    st.markdown("## ☁️ Previsão do Tempo")
-    cidade = st.text_input("Digite a cidade", "Gravataí", key="weather_city_input")
-    if st.button("Consultar Previsão", key="btn_consult_weather"):
-        with st.spinner("Buscando previsão..."):
-            resultado = previsao_tempo(cidade)
-            st.markdown(resultado)
-
-elif st.session_state.current_mode == "PesquisarWeb":
-    st.markdown("## 🌐 Pesquisar na Web")
-    termo = st.text_input("Buscar por:", value="", key="web_search_term_input")
-    if st.button("Pesquisar na Web", key="btn_perform_web_search"):
-        if termo:
-            with st.spinner("Pesquisando na web..."):
-                resultados = pesquisar_web(termo)
-                for i, link in enumerate(resultados, 1):
-                    st.markdown(f"{i}. [{link}]({link})")
+        data = response.json()
+        if response.status_code == 200:
+            temp = data['main']['temp']
+            desc = data['weather'][0]['description'].capitalize()
+            return f"{cidade}: {temp}°C, {desc}"
+        elif response.status_code == 401:
+            return "❌ Chave de API inválida para OpenWeather."
         else:
-            st.warning("Por favor, digite um termo para pesquisar.")
+            return f"Erro: {data.get('message', 'Erro ao buscar clima.')}"
+    except Exception as e:
+        return f"Erro na requisição: {e}"
 
-elif st.session_state.current_mode == "ResumirPagina":
-    st.markdown("## 📄 Resumo de Páginas Web")
-    url_input = st.text_input("Insira a URL da página para resumir:", key="page_summary_url_input")
-    if st.button("Gerar Resumo da Página", key="btn_generate_page_summary") and url_input:
-        with st.spinner("Buscando e resumindo a página..."):
-            resumo = resumir_pagina_web(url_input)
-            st.markdown("### Resumo:")
-            st.write(resumo)
+def buscar_web_serpapi(consulta, chave):
+    if not pode_usar_api("serpapi"):
+        return "⚠️ Limite diário da API SerpAPI atingido."
+    url = f"https://serpapi.com/search.json?q={consulta}&api_key={chave}&hl=pt-br&gl=br"
+    try:
+        resposta = requests.get(url)
+        dados = resposta.json()
+        if "error" in dados:
+            return f"Erro: {dados['error']}"
+        return dados
+    except Exception as e:
+        return f"Erro na busca web: {e}"
+
+# ========== FUNÇÃO VISUAL: BLOCO COM COPIAR ==========
+def bloco_com_copiar(titulo, conteudo):
+    st.markdown(f"""
+    <div style="position: relative; border: 1px solid #ddd; padding: 1em; border-radius: 10px; background-color: #f9f9f9;">
+        <h4 style="margin-top: 0;">📄 {titulo}</h4>
+        <pre id="blocoTexto" style="white-space: pre-wrap; word-wrap: break-word;">{conteudo}</pre>
+        <button onclick="navigator.clipboard.writeText(document.getElementById('blocoTexto').innerText)" 
+                style="position: absolute; top: 10px; right: 10px; padding: 5px 10px; border: none; background-color: #4CAF50; color: white; border-radius: 5px; cursor: pointer;">
+            📋 Copiar
+        </button>
+    </div>
+    """, unsafe_allow_html=True)
+
+# ========== INTERFACE ==========
+st.markdown("<h1 style='text-align: center; color: #4CAF50;'>🤖 OmniIA Assistant</h1>", unsafe_allow_html=True)
+st.markdown("<hr>", unsafe_allow_html=True)
+
+# Carregar dados de uso
+uso = carregar_uso()
+gemini_usado = uso["contadores"]["gemini"]
+gemini_total = LIMITES_DIARIOS["gemini"]
+percentual_gemini = gemini_usado / gemini_total
+
+# Sidebar com controle e menu
+with st.sidebar:
+    st.header("⚙️ Menu")
+    opcao = st.radio("Escolha a função:", ["IA (Gemini)", "Previsão do Tempo", "Pesquisa Web"])
+
+    st.subheader("🔋 Uso da cota Gemini")
+    st.progress(percentual_gemini)
+    st.caption(f"{gemini_usado} de {gemini_total} requisições usadas hoje")
+
+# Ações por aba
+if opcao == "IA (Gemini)":
+    prompt = st.text_input("Digite sua pergunta para a IA")
+    if st.button("Enviar"):
+        resposta = chamar_gemini(prompt)
+        if len(resposta) > 80:
+            bloco_com_copiar("Resposta da IA", resposta)
+        else:
+            st.success(resposta)
+
+elif opcao == "Previsão do Tempo":
+    cidade = st.text_input("Digite o nome da cidade")
+    try:
+        OPENWEATHER_KEY = st.secrets["openweather_key"]
+        if st.button("Buscar clima"):
+            clima = obter_clima(cidade, OPENWEATHER_KEY)
+            st.info(clima)
+    except Exception as e:
+        st.error("Erro ao carregar chave da API OpenWeather.")
+
+elif opcao == "Pesquisa Web":
+    termo = st.text_input("Digite o termo de pesquisa")
+    try:
+        SERPAPI_KEY = st.secrets["serpapi_key"]
+        if st.button("Pesquisar"):
+            resultado = buscar_web_serpapi(termo, SERPAPI_KEY)
+            if isinstance(resultado, dict):
+                st.json(resultado)
+            else:
+                bloco_com_copiar("Resultado da pesquisa", str(resultado))
+    except Exception as e:
+        st.error("Erro ao carregar chave da API SerpAPI.")
