@@ -6,20 +6,13 @@ from bs4 import BeautifulSoup
 from langchain_google_genai import ChatGoogleGenerativeAI
 from typing import Optional, List
 from io import BytesIO
-
-# Importações para memória de sessão
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 
-# Removido: Importação para o componente de STT (stt_recorder)
-# Removido: Importação para gtts
-
 # --- Configurações Iniciais ---
-# Chaves de API
 OPENWEATHER_API_KEY = st.secrets.get("OPENWEATHER_API_KEY", "")
 SERPAPI_KEY = st.secrets.get("SERPAPI_KEY", "")
 GOOGLE_API_KEY = st.secrets.get("GOOGLE_API_KEY", "")
 
-# Instância do LLM usando Google Gemini 1.5 Flash
 llm = ChatGoogleGenerativeAI(
     model="gemini-1.5-flash-latest",
     google_api_key=GOOGLE_API_KEY,
@@ -27,11 +20,9 @@ llm = ChatGoogleGenerativeAI(
     max_output_tokens=1024
 )
 
-# Funções utilitárias
+# --- Funções Auxiliares ---
 
-# Função perguntar: instrução do sistema aprimorada para evitar replicação de código/explicação
 def perguntar(user_message_content: str) -> str:
-    # --- INSTRUCAO DO SISTEMA APRIMORADA ---
     system_instruction = """Você é um assistente de IA prestativo e profissional.
     Responda em português de forma clara e útil.
     Quando fornecer código, comandos, passos de tutorial, nomes de arquivos, ou trechos de texto importantes para copiar, use **blocos de código Markdown (` ``` `)**.
@@ -56,7 +47,7 @@ def perguntar(user_message_content: str) -> str:
 
 def previsao_tempo(cidade: str) -> str:
     try:
-        url = f"[http://api.openweathermap.org/data/2.5/weather?q=](http://api.openweathermap.org/data/2.5/weather?q=){cidade}&appid={OPENWEATHER_API_KEY}&units=metric&lang=pt"
+        url = f"http://api.openweathermap.org/data/2.5/weather?q={cidade}&appid={OPENWEATHER_API_KEY}&units=metric&lang=pt"
         resposta = requests.get(url).json()
         if resposta.get("cod") != 200:
             return f"Erro: {resposta.get('message', 'Erro desconhecido')}"
@@ -77,11 +68,9 @@ def pesquisar_web(termo: str, max_links: int = 5) -> List[str]:
             "q": termo,
             "api_key": SERPAPI_KEY
         }
-        resposta = requests.get(
-            "[https://serpapi.com/search](https://serpapi.com/search)", params=params).json()
+        resposta = requests.get("https://serpapi.com/search", params=params).json()
         resultados = resposta.get("organic_results", [])
-        links = [res.get("link")
-                 for res in resultados if res.get("link")][:max_links]
+        links = [res.get("link") for res in resultados if res.get("link")][:max_links]
         return links if links else ["Nenhum resultado encontrado."]
     except Exception as e:
         return [f"Erro: {e}"]
@@ -112,9 +101,8 @@ def resumir_pagina_web(url: str) -> str:
         return f"Ocorreu um erro ao processar a página: {e}"
 
 
-# --- Interface com Streamlit - Customização visual ---
-st.set_page_config(
-    page_title="OmniIA: Inteligência Integrada", layout="centered")
+# --- Interface com Streamlit ---
+st.set_page_config(page_title="OmniIA: Inteligência Integrada", layout="centered")
 st.markdown("""
     <div style='text-align: center; padding: 10px;'>
         <h1 style='color: #3a7bd5;'>🤖 OmniIA</h1>
@@ -123,63 +111,49 @@ st.markdown("""
     <hr style='margin-bottom: 2rem;'>
 """, unsafe_allow_html=True)
 
-# Inicializar estado da sessão
 if 'current_mode' not in st.session_state:
     st.session_state.current_mode = "Perguntar"
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-
-# --- Título principal no topo ---
 st.markdown("## Peça ao OmniIA")
 
-
-# --- Botões de Ação para Ferramentas ---
 st.markdown("<br>", unsafe_allow_html=True)
 st.markdown("### Selecione uma Ferramenta ou Ação:")
 
 cols_buttons = st.columns(4)
-
 with cols_buttons[0]:
     if st.button("💬 Chat (IA Geral)", key="btn_chat_general"):
         st.session_state.current_mode = "Perguntar"
-
 with cols_buttons[1]:
     if st.button("☁️ Previsão do Tempo", key="btn_weather"):
         st.session_state.current_mode = "PrevisaoTempo"
-
 with cols_buttons[2]:
     if st.button("🌐 Pesquisar na Web", key="btn_web_search"):
         st.session_state.current_mode = "PesquisarWeb"
-
 with cols_buttons[3]:
     if st.button("📄 Resumir Página", key="btn_page_summary"):
         st.session_state.current_mode = "ResumirPagina"
 
 st.markdown("---")
 
-
-# --- Seções Específicas de Ferramentas (aparecem de acordo com o current_mode) ---
+# --- Seções com base no modo atual ---
 
 if st.session_state.current_mode == "Perguntar":
     st.markdown("## 💬 Chat com o OmniIA")
-    
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
     if prompt := st.chat_input("Digite sua mensagem aqui...", key="chat_input_main"):
         st.session_state.messages.append({"role": "user", "content": prompt})
-
         with st.chat_message("user"):
             st.markdown(prompt)
-
         with st.chat_message("assistant"):
             with st.spinner("Pensando..."):
                 response = perguntar(prompt)
                 st.markdown(response)
                 st.session_state.messages.append({"role": "assistant", "content": response})
-
 
 elif st.session_state.current_mode == "PrevisaoTempo":
     st.markdown("## ☁️ Previsão do Tempo")
@@ -191,14 +165,7 @@ elif st.session_state.current_mode == "PrevisaoTempo":
 
 elif st.session_state.current_mode == "PesquisarWeb":
     st.markdown("## 🌐 Pesquisar na Web")
-    st.write("Digite seu termo de busca.")
-    
-    termo = st.text_input(
-        "Buscar por:", 
-        value="", 
-        key="web_search_term_input"
-    )
-    
+    termo = st.text_input("Buscar por:", value="", key="web_search_term_input")
     if st.button("Pesquisar na Web", key="btn_perform_web_search"):
         if termo:
             with st.spinner("Pesquisando na web..."):
